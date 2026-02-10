@@ -366,57 +366,23 @@ function M.render_images(bufnr, note_path)
   vim.schedule(function()
     notify("Starting image rendering...", vim.log.levels.INFO)
     
-    -- Ensure filetype is set
+    -- Ensure filetype is set to trigger markdown integration
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
     
     -- Clear existing images
     pcall(image_nvim.clear, bufnr)
     
-    -- Get window for this buffer
-    local win = vim.fn.bufwinid(bufnr)
-    if win == -1 then
-      notify("No window found for buffer", vim.log.levels.ERROR)
-      return
-    end
-    
-    -- Create images at each line
-    for _, img in ipairs(images) do
-      local cache_file = M.get_cached_image_path(note_path, img.name)
+    -- Wait a bit for image.nvim to process the buffer
+    vim.defer_fn(function()
+      -- Force a buffer update event to trigger image.nvim scanning
+      vim.api.nvim_buf_call(bufnr, function()
+        vim.cmd('doautocmd BufEnter')
+        vim.cmd('doautocmd CursorMoved')
+      end)
       
-      if vim.fn.filereadable(cache_file) == 1 then
-        local success, result = pcall(function()
-          -- Get window position for the line
-          vim.api.nvim_win_set_cursor(win, {img.line, 0})
-          local win_pos = vim.fn.screenpos(win, img.line, 0)
-          
-          local image_obj = image_nvim.from_file(cache_file, {
-            id = "notediscovery_" .. bufnr .. "_" .. img.line .. "_" .. img.name:gsub("[^%w]", "_"),
-            window = win,
-            buffer = bufnr,
-            with_virtual_padding = true,
-            x = win_pos.col - 1,
-            y = win_pos.row - 1,
-          })
-          
-          if image_obj and image_obj.render then
-            image_obj:render()
-            return true
-          end
-          return false
-        end)
-        
-        if success and result then
-          notify("✓ Rendered: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
-        else
-          notify("✗ Failed: " .. img.name .. " - " .. tostring(result), vim.log.levels.ERROR)
-        end
-      else
-        notify("✗ Cache file not found: " .. cache_file, vim.log.levels.ERROR)
-      end
-    end
-    
-    -- Trigger a redraw
-    vim.cmd('redraw')
+      notify("✓ Image rendering triggered", vim.log.levels.INFO)
+      vim.cmd('redraw')
+    end, 100)
   end)
 end
 
