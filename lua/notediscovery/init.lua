@@ -369,6 +369,10 @@ function M.render_images(bufnr, note_path)
     -- Ensure filetype is set
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
     
+    -- Get current window
+    local windows = vim.fn.win_findbuf(bufnr)
+    local window = windows[1] or vim.api.nvim_get_current_win()
+    
     -- Manually create image objects for each image
     for _, img in ipairs(images) do
       local cache_file = M.get_cached_image_path(note_path, img.name)
@@ -378,18 +382,25 @@ function M.render_images(bufnr, note_path)
       if vim.fn.filereadable(cache_file) == 1 then
         notify("Cache file exists, creating image object...", vim.log.levels.INFO)
         
-        -- Create image with image.nvim API
+        -- Create image with image.nvim API using window-relative positioning
         local success, image_obj = pcall(image_nvim.from_file, cache_file, {
+          id = "notediscovery_" .. note_path .. "_" .. img.name:gsub("[^%w]", "_"),
           buffer = bufnr,
+          window = window,
           with_virtual_padding = true,
-          inline = true,
-          x = 0,
-          y = img.line - 1, -- 0-indexed
+          inline = false,  -- Let it position naturally with buffer
         })
         
-        if success and image_obj and image_obj.render then
-          image_obj:render()
-          notify("✓ Rendered: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
+        if success and image_obj then
+          -- Move image to the correct line
+          if image_obj.move then
+            image_obj:move(0, img.line - 1)  -- x=0, y=line (0-indexed)
+          end
+          
+          if image_obj.render then
+            image_obj:render()
+            notify("✓ Rendered: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
+          end
         else
           notify("✗ Failed to create/render: " .. img.name .. " - " .. tostring(image_obj), vim.log.levels.ERROR)
         end
