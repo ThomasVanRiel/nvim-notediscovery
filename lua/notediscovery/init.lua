@@ -31,6 +31,7 @@ M.config = {
   auto_render_images = true, -- Automatically render images when loading notes
   image_cache_dir = data_dir .. '/images', -- Cache directory for downloaded images
   last_note_file = data_dir .. '/last_note', -- File to store last loaded note path
+  debug = false, -- Enable debug logging
 }
 
 -- Logging function
@@ -223,18 +224,34 @@ function M.resolve_attachment_url(note_path, image_name)
   return base_url .. "/api/media/" .. url_encode(media_path)
 end
 
+-- Get cached image path for a given note and image
+function M.get_cached_image_path(note_path, image_name)
+  local folder = vim.fn.fnamemodify(note_path, ":h")
+  
+  -- Handle root case
+  if folder == "." or folder == "" then
+    folder = ""
+  end
+  
+  -- Create cache filename: {folder}_{image_name}
+  local cache_key
+  if folder == "" then
+    cache_key = image_name
+  else
+    -- Convert slashes to underscores
+    cache_key = folder:gsub("/", "_") .. "_" .. image_name
+  end
+  
+  return M.config.image_cache_dir .. "/" .. cache_key
+end
+
 -- Download attachment to local cache
 function M.download_attachment(image_url, image_name, note_path)
   -- Ensure cache directory exists
   vim.fn.mkdir(M.config.image_cache_dir, "p")
   
-  -- Generate safe cache filename
-  local folder_name = vim.fn.fnamemodify(note_path, ":h:t")
-  if folder_name == "." or folder_name == "" then
-    folder_name = "root"
-  end
-  local cache_file = folder_name .. "_" .. image_name
-  local cache_path = M.config.image_cache_dir .. "/" .. cache_file
+  -- Get cache path using shared function
+  local cache_path = M.get_cached_image_path(note_path, image_name)
   
   -- Check if already cached and recent (within last 24 hours)
   local stat = vim.loop.fs_stat(cache_path)
@@ -339,10 +356,42 @@ function M.render_images(bufnr, note_path)
     end
   end
   
-  -- Let image.nvim's markdown integration handle rendering
-  -- It will use the custom resolve_image_path function from config
+  -- Force image.nvim to process the buffer
   vim.schedule(function()
+    -- Ensure filetype is set
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
+    
+    -- Manually create image objects for each image
+    for _, img in ipairs(images) do
+      local cache_file = M.get_cached_image_path(note_path, img.name)
+      
+      if vim.fn.filereadable(cache_file) == 1 then
+        -- Create image with image.nvim API
+        local success, image_obj = pcall(image_nvim.from_file, cache_file, {
+          buffer = bufnr,
+          with_virtual_padding = true,
+          inline = true,
+          x = 0,
+          y = img.line - 1, -- 0-indexed
+        })
+        
+        if success and image_obj and image_obj.render then
+          image_obj:render()
+          if M.config.debug then
+            notify("Rendered image: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
+          end
+        elseif M.config.debug then
+          notify("Failed to create image object for: " .. img.name, vim.log.levels.WARN)
+        end
+      else
+        if M.config.debug then
+          notify("Cached image not found: " .. cache_file, vim.log.levels.WARN)
+        end
+      end
+    end
+    
+    -- Trigger a redraw
+    vim.cmd('redraw')
   end)
 end
 
