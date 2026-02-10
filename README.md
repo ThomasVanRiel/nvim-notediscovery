@@ -31,7 +31,7 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 
 ```lua
 {
-  'yourusername/nvim-notediscovery',
+  'ThomasVanRiel/nvim-notediscovery',
   lazy = false,
   dependencies = {
     {
@@ -46,6 +46,29 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
             only_render_image_at_cursor = false,
             filetypes = { "markdown", "vimwiki" },
             resolve_image_path = function(document_path, image_path, fallback)
+              -- For notediscovery buffers, resolve images from cache
+              if document_path:match("^notediscovery://") then
+                local note_path = document_path:gsub("^notediscovery://", "")
+                local folder = vim.fn.fnamemodify(note_path, ":h")
+                if folder == "." or folder == "" then
+                  folder = "root"
+                end
+                
+                -- Extract just the filename from image_path
+                local image_name = image_path:match("([^/]+)$") or image_path
+                
+                -- Build cached path
+                local cache_dir = vim.fn.stdpath('data') .. '/notediscovery/images'
+                local cached_file = folder .. "_" .. image_name
+                local cached_path = cache_dir .. "/" .. cached_file
+                
+                -- Check if cached file exists
+                if vim.fn.filereadable(cached_path) == 1 then
+                  return cached_path
+                end
+              end
+              
+              -- Fallback to default resolution
               return fallback(document_path, image_path)
             end,
           },
@@ -89,7 +112,7 @@ To test the latest features before they're merged to main:
 
 ```lua
 {
-  'yourusername/nvim-notediscovery',
+  'ThomasVanRiel/nvim-notediscovery',
   branch = 'dev',  -- Use dev branch for latest features
   lazy = false,
   -- ... rest of config
@@ -262,6 +285,8 @@ require('notediscovery').setup({
 
 **Image.nvim Configuration:**
 
+**Important:** You must include the `resolve_image_path` function shown in the Installation section above. This custom function tells image.nvim where to find the cached images for virtual notediscovery buffers.
+
 Choose your backend based on terminal:
 
 ```lua
@@ -282,9 +307,11 @@ backend = "ueberzug"
 **How it works:**
 1. Plugin detects image syntax in markdown: `![[image.png]]`
 2. Downloads image from API to local cache
-3. Rewrites link to cached path: `![](~/.local/share/nvim/notediscovery/images/folder_image.png)`
-4. image.nvim's markdown integration renders the image inline
-5. Image hides when you edit that line, reappears when cursor moves away
+3. image.nvim's custom `resolve_image_path` function intercepts path resolution
+4. Function returns cached path: `~/.local/share/nvim/notediscovery/images/folder_image.png`
+5. image.nvim's markdown integration renders the image inline
+6. Image hides when you edit that line, reappears when cursor moves away
+7. **Original markdown remains unchanged** - no path rewriting in buffer
 
 **Usage:**
 ```vim
@@ -356,6 +383,9 @@ The plugin now automatically follows redirects. If still failing:
 5. **Check image.nvim setup:**
    If you see "image.nvim is not setup", add `opts = {...}` to your image.nvim dependency config (see Installation section).
 
+6. **Verify custom path resolver:**
+   Images won't show without the `resolve_image_path` function in your image.nvim config. This function maps image names to cached paths. See the full configuration in the Installation section.
+
 ### Images at wrong position
 If images appear shifted with wrapped lines:
 ```lua
@@ -426,7 +456,8 @@ Shows the exact curl command and server response.
 ### Image Handling
 - Downloads images from `/api/media/` endpoint on note load
 - Caches to prevent repeated downloads
-- Rewrites markdown image syntax to absolute cached paths
+- Uses image.nvim's custom `resolve_image_path` hook to map image names to cached paths
+- Original markdown syntax remains unchanged in buffer
 - Delegates rendering to image.nvim's markdown integration
 
 ## License

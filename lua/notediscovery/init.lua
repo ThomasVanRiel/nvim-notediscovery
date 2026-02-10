@@ -320,63 +320,28 @@ function M.render_images(bufnr, note_path)
     return
   end
   
-  -- Download images and rewrite paths to cached locations
-  local modified = false
+  -- Download all images to cache (don't rewrite buffer)
   for _, img_info in ipairs(images) do
     local success, result = pcall(function()
       -- Resolve URL
       local image_url = M.resolve_attachment_url(note_path, img_info.name)
       
       -- Download to cache
-      local cached_path = M.download_attachment(image_url, img_info.name, note_path)
+      M.download_attachment(image_url, img_info.name, note_path)
       
-      if cached_path then
-        -- Rewrite the line to point to cached image
-        local line_idx = img_info.line
-        local line = lines[line_idx]
-        
-        -- Escape special characters for pattern matching
-        local escaped_name = img_info.name:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
-        
-        -- Replace wiki-style links: ![[image.png]] -> ![image](cached_path)
-        local new_line, count = line:gsub("!%[%[" .. escaped_name .. "%]%]", "![](" .. cached_path .. ")")
-        
-        -- Also handle standard markdown that might already have descriptions
-        if count == 0 then
-          new_line, count = line:gsub("!%[([^%]]*)%]%(" .. escaped_name .. "%)", "![%1](" .. cached_path .. ")")
-        end
-        
-        if count > 0 and new_line ~= line then
-          lines[line_idx] = new_line
-          modified = true
-          
-          if M.config.debug then
-            log("Rewrote image path at line " .. line_idx .. ": " .. img_info.name .. " -> " .. cached_path, vim.log.levels.DEBUG)
-          end
-        end
+      if M.config.debug then
+        log("Downloaded image: " .. img_info.name, vim.log.levels.DEBUG)
       end
     end)
     
     if not success and M.config.debug then
-      log("Error processing image " .. img_info.name .. ": " .. tostring(result), vim.log.levels.ERROR)
-    end
-  end
-  
-  -- Update buffer with rewritten paths if modified
-  if modified then
-    local save_modified = vim.api.nvim_buf_get_option(bufnr, 'modified')
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    vim.api.nvim_buf_set_option(bufnr, 'modified', save_modified)
-    
-    if M.config.debug then
-      log("Buffer updated with " .. #images .. " rewritten image paths", vim.log.levels.INFO)
+      log("Error downloading image " .. img_info.name .. ": " .. tostring(result), vim.log.levels.ERROR)
     end
   end
   
   -- Let image.nvim's markdown integration handle rendering
-  -- Give it a moment to process the buffer changes
+  -- It will use the custom resolve_image_path function from config
   vim.schedule(function()
-    -- Ensure filetype is set to markdown to trigger image.nvim
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
   end)
 end
