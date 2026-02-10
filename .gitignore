@@ -1,0 +1,21 @@
+# Vim swap files
+*.swp
+*.swo
+*~
+
+# Session files
+Session.vim
+.session
+
+# Cookie files (sensitive)
+*.cookies
+.notediscovery_cookies
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.iml
