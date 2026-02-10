@@ -18,10 +18,6 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 - `curl` (for API requests)
 - A running [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery) instance
 
-## Optional Dependencies
-
-- [image.nvim](https://github.com/3rd/image.nvim) - For inline image rendering (requires Kitty, iTerm2, WezTerm, or compatible terminal with image protocol support)
-
 ## Installation
 
 ### lazy.nvim
@@ -30,15 +26,10 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 {
   'ThomasVanRiel/nvim-notediscovery',
   lazy = false,
-  dependencies = {
-    '3rd/image.nvim',  -- Optional: for inline image rendering
-  },
   config = function()
     require('notediscovery').setup({
       url = "https://notes.example.com/api",  -- Required!
       default_folder = "inbox",                -- Optional
-      enable_images = true,                     -- Optional: enable image rendering
-      auto_render_images = true,                -- Optional: auto-render on load
     })
     
     -- Optional: Set up keybindings
@@ -49,7 +40,6 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
     keymap('n', '<leader>no', ':NoteLoad<CR>', { desc = 'Open note' })
     keymap('n', '<leader>nr', ':NoteLoadLast<CR>', { desc = 'Reload last note' })
     keymap('v', '<leader>nq', '"+y:NoteQuick<CR>', { desc = 'Quick note from selection' })
-    keymap('n', '<leader>ni', ':NoteImagesToggle<CR>', { desc = 'Toggle images' })
   end
 }
 ```
@@ -94,9 +84,6 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 | `:NoteQuick` | Create quick note from clipboard |
 | `:NoteDelete [path]` | Delete a note |
 | `:NoteGraph` | View note relationship graph |
-| `:NoteImagesShow` | Render inline images in current note |
-| `:NoteImagesHide` | Hide inline images in current note |
-| `:NoteImagesToggle` | Toggle inline images on/off |
 | `:NoteTest` | Test API connection |
 | `:NoteLoadDebug [path]` | Load note with debug output |
 
@@ -133,15 +120,6 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 " Press q to close
 ```
 
-### Working with images
-```vim
-" Images in ![[image.png]] or ![alt](image.png) format are auto-rendered
-" if image.nvim is installed
-:NoteImagesToggle  " Toggle images on/off
-:NoteImagesHide    " Hide images
-:NoteImagesShow    " Show images
-```
-
 ## Configuration Options
 
 ```lua
@@ -150,7 +128,7 @@ require('notediscovery').setup({
   url = "https://notes.example.com/api",
   
   -- Optional: Data directory for plugin files (default: vim.fn.stdpath('data')/notediscovery)
-  -- This stores cookies, logs, image cache, and last note state
+  -- This stores cookies, logs, and last note state
   data_dir = vim.fn.stdpath('data') .. '/notediscovery',
   
   -- Optional: Cookie file location (default: {data_dir}/cookies)
@@ -162,15 +140,6 @@ require('notediscovery').setup({
   -- Optional: Timestamp format for quick notes (default: "%Y-%m-%d-%H%M%S")
   quick_note_format = "%Y-%m-%d-%H%M%S",
   
-  -- Optional: Enable inline image rendering (default: true)
-  enable_images = true,
-  
-  -- Optional: Auto-render images on note load (default: true)
-  auto_render_images = true,
-  
-  -- Optional: Image cache directory (default: {data_dir}/images)
-  image_cache_dir = vim.fn.stdpath('data') .. '/notediscovery/images',
-  
   -- Optional: Log file location (default: {data_dir}/notediscovery.log)
   log_file = vim.fn.stdpath('data') .. '/notediscovery/notediscovery.log',
   
@@ -178,24 +147,6 @@ require('notediscovery').setup({
   debug = false,
 })
 ```
-
-### Image Support
-
-**Requirements:**
-- Install [image.nvim](https://github.com/3rd/image.nvim) plugin
-- Use a compatible terminal: Kitty, iTerm2, WezTerm, or terminals with image protocol support
-
-**Supported syntax:**
-- Wiki-style: `![[image.png]]`
-- Standard markdown: `![alt text](image.png)`
-
-**Supported formats:** PNG, JPG, JPEG, GIF, BMP, WEBP
-
-**How it works:**
-- Images are fetched from `{note_folder}/_attachments/` via the `/api/media/` endpoint
-- Downloaded images are cached in `{data_dir}/images/` for faster subsequent loads
-- Images render automatically when loading notes (configurable with `auto_render_images`)
-- Use `:NoteImagesToggle` to show/hide images in the current buffer
 
 ## Troubleshooting
 
