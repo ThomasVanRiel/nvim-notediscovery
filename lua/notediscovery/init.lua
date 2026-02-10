@@ -335,10 +335,18 @@ function M.render_images(bufnr, note_path)
       local local_path = M.download_attachment(image_url, img_info.name, note_path)
       
       if local_path then
-        -- Try to create and render the image
+        -- Get the window displaying this buffer
+        local windows = vim.fn.win_findbuf(bufnr)
+        local window = windows[1] or vim.api.nvim_get_current_win()
+        
+        -- Try to create and render the image at the correct line
         local image = image_nvim.from_file(local_path, {
+          window = window,
           buffer = bufnr,
           with_virtual_padding = true,
+          inline = true,
+          x = 0,
+          y = img_info.line - 1,  -- 0-indexed for image.nvim
         })
         
         if image then
