@@ -57,15 +57,29 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
                 -- Extract just the filename from image_path
                 -- Handle both "image.png" and "_attachments/image.png" formats
                 local image_name = image_path:match("([^/]+)$") or image_path
+                -- Also handle wiki-style ![[_attachments/image.png]]
+                image_name = image_name:gsub("^_attachments/", "")
                 
-                -- Build cached path
+                -- Build cached path - format is {folder}_{filename}
+                -- Convert slashes to underscores for nested folders
                 local cache_dir = vim.fn.stdpath('data') .. '/notediscovery/images'
-                local cached_file = folder .. "_" .. image_name
+                local folder_name = folder:gsub("/", "_")
+                local cached_file = folder_name .. "_" .. image_name
                 local cached_path = cache_dir .. "/" .. cached_file
                 
                 -- Debug logging (uncomment to troubleshoot)
-                -- print("Resolving: " .. image_path .. " -> " .. cached_path)
-                -- print("Exists: " .. tostring(vim.fn.filereadable(cached_path) == 1))
+                -- vim.notify("Resolving: " .. image_path .. " -> " .. cached_path, vim.log.levels.INFO)
+                -- vim.notify("Exists: " .. tostring(vim.fn.filereadable(cached_path) == 1), vim.log.levels.INFO)
+                
+                -- Check if cached file exists
+                if vim.fn.filereadable(cached_path) == 1 then
+                  return cached_path
+                end
+              end
+              
+              -- Fallback to default resolution
+              return fallback(document_path, image_path)
+            end,
                 
                 -- Check if cached file exists
                 if vim.fn.filereadable(cached_path) == 1 then
