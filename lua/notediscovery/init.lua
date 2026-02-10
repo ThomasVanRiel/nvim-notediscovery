@@ -335,17 +335,24 @@ function M.render_images(bufnr, note_path)
         local line_idx = img_info.line
         local line = lines[line_idx]
         
+        -- Escape special characters for pattern matching
+        local escaped_name = img_info.name:gsub("([%^%$%(%)%%%.%[%]%*%+%-%?])", "%%%1")
+        
         -- Replace wiki-style links: ![[image.png]] -> ![image](cached_path)
-        local new_line = line:gsub("!%[%[" .. vim.pesc(img_info.name) .. "%]%]", "![" .. img_info.name .. "](" .. cached_path .. ")")
+        local new_line, count = line:gsub("!%[%[" .. escaped_name .. "%]%]", "![](" .. cached_path .. ")")
         
         -- Also handle standard markdown that might already have descriptions
-        if new_line == line then
-          new_line = line:gsub("!%[([^%]]*)%]%(" .. vim.pesc(img_info.name) .. "%)", "![%1](" .. cached_path .. ")")
+        if count == 0 then
+          new_line, count = line:gsub("!%[([^%]]*)%]%(" .. escaped_name .. "%)", "![%1](" .. cached_path .. ")")
         end
         
-        if new_line ~= line then
+        if count > 0 and new_line ~= line then
           lines[line_idx] = new_line
           modified = true
+          
+          if M.config.debug then
+            log("Rewrote image path at line " .. line_idx .. ": " .. img_info.name .. " -> " .. cached_path, vim.log.levels.DEBUG)
+          end
         end
       end
     end)
@@ -360,11 +367,16 @@ function M.render_images(bufnr, note_path)
     local save_modified = vim.api.nvim_buf_get_option(bufnr, 'modified')
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.api.nvim_buf_set_option(bufnr, 'modified', save_modified)
+    
+    if M.config.debug then
+      log("Buffer updated with " .. #images .. " rewritten image paths", vim.log.levels.INFO)
+    end
   end
   
   -- Let image.nvim's markdown integration handle rendering
+  -- Give it a moment to process the buffer changes
   vim.schedule(function()
-    -- Ensure filetype is set to markdown
+    -- Ensure filetype is set to markdown to trigger image.nvim
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
   end)
 end

@@ -9,7 +9,10 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 - 🔍 Full-text search across all notes
 - 📁 Browse notes by folder with interactive list
 - ⚡ Quick note creation from clipboard/selection
-- 🌐 View note graph (wikilink connections)
+- 🖼️ Inline image rendering with automatic downloading and caching
+- 🔄 Persistent last note - `:NoteLoadLast` works across Neovim restarts
+- 📢 Non-blocking notifications (errors only prompt for Enter)
+- 🗂️ Clean data directory - all plugin files in one location
 - 🐛 Debug mode for troubleshooting
 
 ## Requirements
@@ -31,7 +34,33 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
   'yourusername/nvim-notediscovery',
   lazy = false,
   dependencies = {
-    '3rd/image.nvim',  -- Optional: for inline image rendering
+    {
+      '3rd/image.nvim',
+      opts = {
+        backend = "kitty",  -- or "ueberzug" for other terminals
+        integrations = {
+          markdown = {
+            enabled = true,
+            clear_in_insert_mode = true,
+            download_remote_images = true,
+            only_render_image_at_cursor = false,
+            filetypes = { "markdown", "vimwiki" },
+            resolve_image_path = function(document_path, image_path, fallback)
+              return fallback(document_path, image_path)
+            end,
+          },
+        },
+        max_width = nil,
+        max_height = nil,
+        max_width_window_percentage = nil,
+        max_height_window_percentage = 50,
+        window_overlap_clear_enabled = true,  -- Hide images when overlapped by windows
+        window_overlap_clear_ft_ignore = { "cmp_menu", "cmp_docs", "" },
+        editor_only_render_when_focused = false,
+        tmux_show_only_in_active_window = false,
+        hijack_file_patterns = { "*.png", "*.jpg", "*.jpeg", "*.gif", "*.webp" },
+      },
+    },
   },
   config = function()
     require('notediscovery').setup({
@@ -54,6 +83,29 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 }
 ```
 
+### Using Development Branch
+
+To test the latest features before they're merged to main:
+
+```lua
+{
+  'yourusername/nvim-notediscovery',
+  branch = 'dev',  -- Use dev branch for latest features
+  lazy = false,
+  -- ... rest of config
+}
+```
+
+Or use a local development copy:
+
+```lua
+{
+  'nvim-notediscovery',
+  dir = '~/path/to/nvim-notediscovery',  -- Local path
+  lazy = false,
+  -- ... rest of config
+}
+```
 
 ## Quick Start
 
@@ -79,6 +131,12 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 4. **Edit and save**:
    - Make changes to the note
    - Save with `:w` or `:wq` (auto-syncs to NoteDiscovery)
+
+5. **Quick access to last note**:
+   ```vim
+   :NoteLoadLast
+   ```
+   Reloads your most recently opened note - persists across Neovim restarts!
 
 ## Commands
 
@@ -176,14 +234,25 @@ require('notediscovery').setup({
   
   -- Optional: Enable debug mode (default: false)
   debug = false,
+  
+  -- Optional: Automatically prompt for login on 401 errors (default: false)
+  auto_login = false,
 })
 ```
+
+**Note about notifications:** Info and success messages appear briefly without blocking (no Enter press needed). Only error messages require acknowledgment to ensure you see important issues.
 
 ### Image Support
 
 **Requirements:**
 - Install [image.nvim](https://github.com/3rd/image.nvim) plugin
-- Use a compatible terminal: Kitty, iTerm2, WezTerm, or terminals with image protocol support
+- Use a compatible terminal with image protocol support:
+  - ✅ **Kitty** (Linux/macOS) - Best support
+  - ✅ **WezTerm** (Linux/macOS/Windows WSL2)
+  - ✅ **iTerm2** (macOS)
+  - ✅ **Ueberzug++** (Linux, requires external tool)
+  - ❌ **Windows Terminal** - Not supported (yet)
+  - ❌ **CMD/PowerShell** - Not supported
 
 **Supported syntax:**
 - Wiki-style: `![[image.png]]`
@@ -191,11 +260,49 @@ require('notediscovery').setup({
 
 **Supported formats:** PNG, JPG, JPEG, GIF, BMP, WEBP
 
+**Image.nvim Configuration:**
+
+Choose your backend based on terminal:
+
+```lua
+-- For Kitty terminal
+backend = "kitty"
+
+-- For other Linux terminals with ueberzug installed
+backend = "ueberzug"
+```
+
+**Key features:**
+- **Automatic downloading**: Images fetched from `/api/media/{folder}/_attachments/{image}`
+- **Caching**: Downloaded images cached in `{data_dir}/images/` for fast reloads
+- **Auto-rendering**: Images appear automatically when loading notes
+- **Hide on edit**: Images disappear when cursor is on the line (in insert mode)
+- **Path rewriting**: Plugin converts wiki-style links to absolute paths for image.nvim
+
 **How it works:**
-- Images are fetched from `{note_folder}/_attachments/` via the `/api/media/` endpoint
-- Downloaded images are cached in `{data_dir}/images/` for faster subsequent loads
-- Images render automatically when loading notes (configurable with `auto_render_images`)
-- Use `:NoteImagesToggle` to show/hide images in the current buffer
+1. Plugin detects image syntax in markdown: `![[image.png]]`
+2. Downloads image from API to local cache
+3. Rewrites link to cached path: `![](~/.local/share/nvim/notediscovery/images/folder_image.png)`
+4. image.nvim's markdown integration renders the image inline
+5. Image hides when you edit that line, reappears when cursor moves away
+
+**Usage:**
+```vim
+:NoteLoad my-note.md        " Images render automatically
+:NoteImagesToggle           " Toggle all images on/off
+:NoteImagesHide             " Hide all images
+:NoteImagesShow             " Show all images
+```
+
+**Image positioning note:** If images appear at wrong positions with wrapped lines, consider disabling line wrap for markdown:
+```lua
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "markdown",
+  callback = function()
+    vim.opt_local.wrap = false
+  end,
+})
+```
 
 ## Troubleshooting
 
@@ -214,6 +321,60 @@ This checks:
 ```
 Login again if your session expired (7 day default).
 
+### Login fails with HTTP 301
+The plugin now automatically follows redirects. If still failing:
+- Check your URL format: `http://localhost:8000/api` (with `/api` suffix)
+- Ensure the NoteDiscovery server is running
+- Try the full URL with protocol: `http://` or `https://`
+
+### Images not showing
+1. **Check if image.nvim is installed and configured:**
+   ```vim
+   :lua print(vim.inspect(package.loaded['image']))
+   ```
+   Should not be `nil`.
+
+2. **Check terminal compatibility:**
+   - Windows: Only works in WSL2 with Kitty/WezTerm
+   - Linux: Use Kitty or install ueberzug
+   - macOS: Use Kitty or iTerm2
+
+3. **Verify images are enabled:**
+   ```vim
+   :lua print(require('notediscovery').config.enable_images)
+   ```
+   Should return `true`.
+
+4. **Enable debug mode:**
+   ```vim
+   :lua require('notediscovery').config.debug = true
+   :NoteLoad your-note.md
+   :lua print(require('notediscovery').config.log_file)
+   ```
+   Check the log file for image download/rendering errors.
+
+5. **Check image.nvim setup:**
+   If you see "image.nvim is not setup", add `opts = {...}` to your image.nvim dependency config (see Installation section).
+
+### Images at wrong position
+If images appear shifted with wrapped lines:
+```lua
+-- Disable line wrapping in markdown
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "markdown",
+  callback = function()
+    vim.opt_local.wrap = false
+  end,
+})
+```
+
+### Image cache location
+Clear cached images if needed:
+```bash
+rm -rf ~/.local/share/nvim/notediscovery/images/
+```
+Images will be re-downloaded on next note load.
+
 ### Debug a specific request
 ```vim
 :NoteLoadDebug my-note.md
@@ -225,14 +386,48 @@ Shows the exact curl command and server response.
 :lua print(vim.inspect(require('notediscovery').config))
 ```
 
+### View debug log
+```vim
+:lua print(vim.fn.readfile(require('notediscovery').config.log_file))
+```
+
 ## How It Works
 
-- All plugin data stored in a dedicated directory: `vim.fn.stdpath('data')/notediscovery/` (e.g., `~/.local/share/nvim/notediscovery/` on Linux)
+### Data Storage
+- All plugin data stored in a dedicated directory: `vim.fn.stdpath('data')/notediscovery/`
+  - **Linux/macOS**: `~/.local/share/nvim/notediscovery/`
+  - **Windows**: `~/AppData/Local/nvim-data/notediscovery/`
+- Contains: cookies, logs, image cache, and last note state
+- Keeps your home directory clean and organized
+
+### API Communication
 - Uses `curl` for HTTP requests to NoteDiscovery API
-- Session authentication via cookie file
-- Intercepts `:w` / `:wq` with `BufWriteCmd` to auto-save to API
+- Session authentication via cookie file (7-day default expiration)
+- Supports HTTP redirects (`-L` flag for 301/302)
 - URL encodes paths to handle folders and special characters
-- Last loaded note is persisted across Neovim restarts
+
+### Buffer Management
+- Virtual buffers with `buftype=acwrite` (not backed by real files)
+- Intercepts `:w` / `:wq` with `BufWriteCmd` autocmd to auto-save to API
+- Buffer names: `notediscovery://{path}` for display
+- Filetype set to `markdown` for syntax highlighting
+
+### Persistent State
+- **Last loaded note**: Saved to `{data_dir}/last_note` file
+- `:NoteLoadLast` works even after Neovim restarts
+- Automatically loads previous note path on plugin initialization
+
+### Notifications
+- **Info/Success messages**: Non-blocking, appear briefly (no Enter press needed)
+- **Error messages**: Block and require Enter press to ensure visibility
+- **Warnings**: Non-blocking but visually distinct
+- Uses `vim.api.nvim_echo()` for non-blocking messages
+
+### Image Handling
+- Downloads images from `/api/media/` endpoint on note load
+- Caches to prevent repeated downloads
+- Rewrites markdown image syntax to absolute cached paths
+- Delegates rendering to image.nvim's markdown integration
 
 ## License
 
