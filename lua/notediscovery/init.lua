@@ -50,12 +50,6 @@ function M.setup(opts)
     return
   end
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
-  vim.notify("NoteDiscovery configured: " .. M.config.url, vim.log.levels.INFO)
-  
-  -- Show auto-login status
-  if M.config.auto_login then
-    vim.notify("Auto-login enabled - you'll be prompted automatically on session expiry", vim.log.levels.INFO)
-  end
   
   -- Register debug commands if debug mode is enabled
   if M.config.debug then
@@ -78,8 +72,6 @@ function M.setup(opts)
     vim.api.nvim_create_user_command("NoteClearLog", function()
       M.clear_log()
     end, {})
-    
-    vim.notify("Debug mode enabled - additional commands: :NoteTest :NoteLoadDebug :NoteSearchDebug :NoteViewLog :NoteClearLog", vim.log.levels.INFO)
   end
 end
 
