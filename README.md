@@ -25,6 +25,7 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 ```lua
 {
   'yourusername/nvim-notediscovery',
+  lazy = false,
   config = function()
     require('notediscovery').setup({
       url = "https://notes.example.com/api",  -- Required!
@@ -44,30 +45,6 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 }
 ```
 
-### packer.nvim
-
-```lua
-use {
-  'yourusername/nvim-notediscovery',
-  config = function()
-    require('notediscovery').setup({
-      url = "https://notes.example.com/api",
-    })
-  end
-}
-```
-
-### vim-plug
-
-```vim
-Plug 'yourusername/nvim-notediscovery'
-
-lua << EOF
-require('notediscovery').setup({
-  url = "https://notes.example.com/api"
-})
-EOF
-```
 
 ## Quick Start
 

@@ -248,6 +248,11 @@ function M.load_note(note_path, debug)
     -- Set up buffer name for display
     vim.api.nvim_buf_set_name(bufnr, 'notediscovery://' .. note_path)
     
+    -- Disable swap file to prevent conflicts
+    vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
+    vim.api.nvim_buf_set_option(bufnr, 'buftype', 'acwrite')
+    vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'hide')
+    
     -- Intercept write commands to save to NoteDiscovery
     vim.api.nvim_create_autocmd("BufWriteCmd", {
       buffer = bufnr,
@@ -305,6 +310,11 @@ function M.new_note(note_path)
   
   -- Set up buffer name for display
   vim.api.nvim_buf_set_name(bufnr, 'notediscovery://' .. note_path)
+  
+  -- Disable swap file to prevent conflicts
+  vim.api.nvim_buf_set_option(bufnr, 'swapfile', false)
+  vim.api.nvim_buf_set_option(bufnr, 'buftype', 'acwrite')
+  vim.api.nvim_buf_set_option(bufnr, 'bufhidden', 'hide')
   
   -- Intercept write commands to save to NoteDiscovery
   vim.api.nvim_create_autocmd("BufWriteCmd", {
