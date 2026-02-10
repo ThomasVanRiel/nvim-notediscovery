@@ -16,7 +16,29 @@ M.config = {
   cookies_file = vim.fn.expand("~/.notediscovery_cookies"),
   default_folder = "inbox",
   quick_note_format = "%Y-%m-%d-%H%M%S", -- strftime format for quick notes
+  log_file = vim.fn.expand("~/.notediscovery.log"),
 }
+
+-- Logging function
+local function log(message, level)
+  level = level or vim.log.levels.INFO
+  
+  -- Always write to log file if debug is enabled
+  if M.config.debug or M.config.log_file then
+    local timestamp = os.date("%Y-%m-%d %H:%M:%S")
+    local log_level = ({"TRACE", "DEBUG", "INFO", "WARN", "ERROR"})[level] or "INFO"
+    local log_line = string.format("[%s] [%s] %s\n", timestamp, log_level, message)
+    
+    local file = io.open(M.config.log_file, "a")
+    if file then
+      file:write(log_line)
+      file:close()
+    end
+  end
+  
+  -- Also show in Neovim
+  vim.notify(message, level)
+end
 
 -- Setup function to override defaults
 function M.setup(opts)
@@ -26,6 +48,31 @@ function M.setup(opts)
   end
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   vim.notify("NoteDiscovery configured: " .. M.config.url, vim.log.levels.INFO)
+  
+  -- Register debug commands if debug mode is enabled
+  if M.config.debug then
+    vim.api.nvim_create_user_command("NoteTest", function()
+      M.test_connection()
+    end, {})
+    
+    vim.api.nvim_create_user_command("NoteLoadDebug", function(args)
+      M.load_note(args.args, true)
+    end, { nargs = "?", complete = "file" })
+    
+    vim.api.nvim_create_user_command("NoteSearchDebug", function(args)
+      M.search_notes(args.args, true)
+    end, { nargs = "?" })
+    
+    vim.api.nvim_create_user_command("NoteViewLog", function()
+      M.view_log()
+    end, {})
+    
+    vim.api.nvim_create_user_command("NoteClearLog", function()
+      M.clear_log()
+    end, {})
+    
+    vim.notify("Debug mode enabled - additional commands: :NoteTest :NoteLoadDebug :NoteSearchDebug :NoteViewLog :NoteClearLog", vim.log.levels.INFO)
+  end
 end
 
 -- Check if URL is configured
@@ -61,15 +108,15 @@ local function curl_request(method, endpoint, data, debug)
     local json = vim.fn.json_encode(data)
     cmd = string.format(
       'curl -b %s -X %s -H "Content-Type: application/json" -d %s -s -w "\\n%%{http_code}" %s',
-      M.config.cookies_file, method, vim.fn.shellescape(json), url
+      M.config.cookies_file, method, vim.fn.shellescape(json), vim.fn.shellescape(url)
     )
   else
-    cmd = string.format('curl -b %s -s -w "\\n%%{http_code}" %s', M.config.cookies_file, url)
+    cmd = string.format('curl -b %s -s -w "\\n%%{http_code}" %s', M.config.cookies_file, vim.fn.shellescape(url))
   end
   
   -- Debug mode: show the command
   if debug or M.config.debug then
-    vim.notify("Debug: " .. cmd, vim.log.levels.INFO)
+    log("Debug: " .. cmd, vim.log.levels.INFO)
   end
   
   local output = vim.fn.system(cmd)
@@ -83,7 +130,7 @@ local function curl_request(method, endpoint, data, debug)
   
   -- Debug: show response
   if debug or M.config.debug then
-    vim.notify("Debug: HTTP " .. http_code .. ", Response: " .. response:sub(1, 200), vim.log.levels.INFO)
+    log("Debug: HTTP " .. http_code .. ", Response: " .. response:sub(1, 500), vim.log.levels.INFO)
   end
   
   -- Check for curl errors
@@ -132,10 +179,10 @@ function M.login()
   
   -- Execute login curl command
   local cmd = string.format(
-    'curl -c %s -X POST -H "Content-Type: application/x-www-form-urlencoded" -d %s -s -w "%%{http_code}" -o /dev/null %s/login',
+    'curl -c %s -X POST -H "Content-Type: application/x-www-form-urlencoded" -d %s -s -w "%%{http_code}" -o /dev/null %s',
     M.config.cookies_file,
     vim.fn.shellescape("password=" .. password),
-    base_url
+    vim.fn.shellescape(base_url .. "/login")
   )
   
   local http_code = vim.fn.system(cmd)
@@ -163,7 +210,7 @@ function M.test_connection()
   
   -- Try to get config endpoint (doesn't require auth)
   local base_url = M.config.url:gsub("/api$", "")
-  local cmd = string.format('curl -s -w "\\n%%{http_code}" %s/health', base_url)
+  local cmd = string.format('curl -s -w "\\n%%{http_code}" %s', vim.fn.shellescape(base_url .. "/health"))
   local output = vim.fn.system(cmd)
   local lines = vim.split(output, "\n")
   local http_code = lines[#lines]
@@ -338,7 +385,7 @@ function M.new_note(note_path)
 end
 
 -- Search notes
-function M.search_notes(query)
+function M.search_notes(query, debug)
   if not query or query == "" then
     query = vim.fn.input("Search notes: ")
   end
@@ -348,9 +395,23 @@ function M.search_notes(query)
     return
   end
   
-  local result = curl_request("GET", "/search?q=" .. vim.fn.shellescape(query))
+  local result = curl_request("GET", "/search?q=" .. url_encode(query), nil, debug)
   
-  if result and result.results then
+  if not result then
+    vim.notify("✗ Search failed - API request error", vim.log.levels.ERROR)
+    return
+  end
+  
+  if debug then
+    vim.notify("Debug: Full response: " .. vim.inspect(result), vim.log.levels.INFO)
+  end
+  
+  if result.results then
+    if #result.results == 0 then
+      vim.notify("✓ No notes found matching: " .. query, vim.log.levels.INFO)
+      return
+    end
+    
     -- Create a new buffer with search results
     vim.cmd('new')
     local bufnr = vim.api.nvim_get_current_buf()
@@ -399,7 +460,7 @@ function M.search_notes(query)
     
     vim.notify("✓ Found " .. #result.results .. " note(s)", vim.log.levels.INFO)
   else
-    vim.notify("✗ Search failed or no results", vim.log.levels.WARN)
+    vim.notify("✗ Unexpected API response format. Expected 'results' field. " .. (debug and vim.inspect(result) or "Use :NoteSearchDebug to see full response"), vim.log.levels.ERROR)
   end
 end
 
@@ -513,8 +574,8 @@ function M.delete_note(note_path)
     return
   end
   
-  local cmd = string.format('curl -b %s -X DELETE -s %s/notes/%s', 
-    M.config.cookies_file, M.config.url, note_path)
+  local cmd = string.format('curl -b %s -X DELETE -s %s', 
+    M.config.cookies_file, vim.fn.shellescape(M.config.url .. "/notes/" .. note_path))
   vim.fn.system(cmd)
   
   if vim.v.shell_error == 0 then
@@ -524,35 +585,26 @@ function M.delete_note(note_path)
   end
 end
 
--- Get note graph
-function M.show_graph()
-  local result = curl_request("GET", "/graph")
+-- View debug log
+function M.view_log()
+  if vim.fn.filereadable(M.config.log_file) == 0 then
+    vim.notify("Log file not found: " .. M.config.log_file, vim.log.levels.WARN)
+    return
+  end
   
-  if result and result.nodes then
-    vim.cmd('new')
-    vim.api.nvim_buf_set_option(0, 'buftype', 'nofile')
-    vim.api.nvim_buf_set_option(0, 'bufhidden', 'wipe')
-    vim.api.nvim_buf_set_name(0, 'NoteDiscovery - Graph')
-    
-    local lines = {
-      "Note Graph",
-      string.rep("─", 60),
-      "",
-      "Nodes: " .. #result.nodes,
-      "Edges: " .. #result.edges,
-      "",
-      "Connections:",
-      ""
-    }
-    
-    for _, edge in ipairs(result.edges) do
-      table.insert(lines, edge.from .. " → " .. edge.to)
-    end
-    
-    vim.api.nvim_buf_set_lines(0, 0, -1, false, lines)
-    vim.api.nvim_buf_set_option(0, 'modifiable', false)
+  vim.cmd('new ' .. vim.fn.fnameescape(M.config.log_file))
+  vim.cmd('setlocal buftype=nowrite')
+  vim.cmd('normal! G') -- Jump to end
+end
+
+-- Clear debug log
+function M.clear_log()
+  local file = io.open(M.config.log_file, "w")
+  if file then
+    file:close()
+    vim.notify("✓ Log cleared: " .. M.config.log_file, vim.log.levels.INFO)
   else
-    vim.notify("✗ Failed to get graph", vim.log.levels.ERROR)
+    vim.notify("✗ Failed to clear log", vim.log.levels.ERROR)
   end
 end
 
@@ -562,7 +614,6 @@ end
 -- vim.keymap.set('n', '<leader>nn', ':NoteNew<CR>', { desc = 'NoteDiscovery: New note' })
 -- vim.keymap.set('n', '<leader>nf', ':NoteSearch<CR>', { desc = 'NoteDiscovery: Search notes' })
 -- vim.keymap.set('n', '<leader>na', ':NoteList<CR>', { desc = 'NoteDiscovery: List all notes' })
--- vim.keymap.set('n', '<leader>ng', ':NoteGraph<CR>', { desc = 'NoteDiscovery: Show graph' })
 -- vim.keymap.set('v', '<leader>nq', '"+y:NoteQuick<CR>', { desc = 'NoteDiscovery: Quick note from selection' })
 
 return M
