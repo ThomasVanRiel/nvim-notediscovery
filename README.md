@@ -24,7 +24,7 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 
 ```lua
 {
-  'yourusername/nvim-notediscovery',
+  'ThomasVanRiel/nvim-notediscovery',
   lazy = false,
   config = function()
     require('notediscovery').setup({
