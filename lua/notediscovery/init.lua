@@ -376,16 +376,12 @@ function M.search_notes(query)
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
     
-    -- Store the path mapping in buffer variable
-    vim.b[bufnr].notediscovery_paths = line_to_path
-    
-    -- Set up keybindings for this buffer
+    -- Set up keybindings for this buffer (using closure to capture line_to_path)
     vim.keymap.set('n', '<CR>', function()
       local line = vim.fn.line('.')
-      local paths = vim.b.notediscovery_paths
-      if paths and paths[line] then
+      if line_to_path[line] then
         vim.cmd('close')
-        M.load_note(paths[line])
+        M.load_note(line_to_path[line])
       end
     end, { buffer = bufnr, desc = 'Load note' })
     
@@ -448,16 +444,12 @@ function M.list_notes()
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
     vim.api.nvim_buf_set_option(bufnr, 'modifiable', false)
     
-    -- Store the path mapping in buffer variable
-    vim.b[bufnr].notediscovery_paths = line_to_path
-    
-    -- Set up keybindings for this buffer
+    -- Set up keybindings for this buffer (using closure to capture line_to_path)
     vim.keymap.set('n', '<CR>', function()
       local line = vim.fn.line('.')
-      local paths = vim.b.notediscovery_paths
-      if paths and paths[line] then
+      if line_to_path[line] then
         vim.cmd('close')
-        M.load_note(paths[line])
+        M.load_note(line_to_path[line])
       end
     end, { buffer = bufnr, desc = 'Load note' })
     
