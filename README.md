@@ -51,7 +51,7 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
 1. **Configure** in your `init.lua`:
    ```lua
    require('notediscovery').setup({
-     url = "https://notes.thomasvanriel.com/api"
+     url = "https://notes.example.com/api"
    })
    ```
 
