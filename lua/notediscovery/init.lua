@@ -54,6 +54,19 @@ local function log(message, level)
   vim.notify(message, level)
 end
 
+-- Notification wrapper: only ERROR level prompts for Enter
+local function notify(message, level)
+  level = level or vim.log.levels.INFO
+  
+  if level == vim.log.levels.ERROR then
+    -- Errors require Enter press
+    vim.notify(message, level)
+  else
+    -- Info/Warn messages don't block
+    vim.api.nvim_echo({{message, level == vim.log.levels.WARN and "WarningMsg" or "None"}}, false, {})
+  end
+end
+
 -- Save last loaded note to file
 local function save_last_note(note_path)
   -- Ensure data directory exists
@@ -81,7 +94,7 @@ end
 -- Setup function to override defaults
 function M.setup(opts)
   if not opts or not opts.url then
-    vim.notify("NoteDiscovery: 'url' is required in setup()", vim.log.levels.ERROR)
+    notify("NoteDiscovery: 'url' is required in setup()", vim.log.levels.ERROR)
     return
   end
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
@@ -123,7 +136,7 @@ end
 -- Check if URL is configured
 local function check_config()
   if not M.config.url then
-    vim.notify("NoteDiscovery not configured. Call setup() with 'url' first", vim.log.levels.ERROR)
+    notify("NoteDiscovery not configured. Call setup() with 'url' first", vim.log.levels.ERROR)
     return false
   end
   return true
@@ -392,15 +405,15 @@ function M.toggle_images(bufnr)
   if images and #images > 0 then
     -- Images are shown, hide them
     M.clear_images(bufnr)
-    vim.notify("Images hidden", vim.log.levels.INFO)
+    notify("Images hidden", vim.log.levels.INFO)
   else
     -- Images are hidden, show them
     local note_path = vim.b[bufnr].notediscovery_path
     if note_path then
       M.render_images(bufnr, note_path)
-      vim.notify("Images shown", vim.log.levels.INFO)
+      notify("Images shown", vim.log.levels.INFO)
     else
-      vim.notify("Not a NoteDiscovery buffer", vim.log.levels.WARN)
+      notify("Not a NoteDiscovery buffer", vim.log.levels.WARN)
     end
   end
 end
@@ -457,25 +470,25 @@ local function curl_request(method, endpoint, data, debug, retry_on_auth)
   if http_code == "401" then
     -- Auto-login if enabled
     if M.config.auto_login and retry_on_auth then
-      vim.notify("Session expired. Attempting auto-login...", vim.log.levels.WARN)
+      notify("Session expired. Attempting auto-login...", vim.log.levels.WARN)
       local login_success = M.login()
       if login_success then
-        vim.notify("Retrying request...", vim.log.levels.INFO)
+        notify("Retrying request...", vim.log.levels.INFO)
         -- Retry the request once with retry disabled to prevent infinite loop
         return curl_request(method, endpoint, data, debug, false)
       else
-        vim.notify("✗ Auto-login failed", vim.log.levels.ERROR)
+        notify("✗ Auto-login failed", vim.log.levels.ERROR)
         return nil
       end
     else
-      vim.notify("✗ Not authenticated. Run :NoteLogin first", vim.log.levels.ERROR)
+      notify("✗ Not authenticated. Run :NoteLogin first", vim.log.levels.ERROR)
       return nil
     end
   elseif http_code == "404" then
-    vim.notify("✗ Not found (404). Check the path or URL", vim.log.levels.ERROR)
+    notify("✗ Not found (404). Check the path or URL", vim.log.levels.ERROR)
     return nil
   elseif http_code:match("^[45]") then
-    vim.notify("✗ API error (HTTP " .. http_code .. "): " .. response:sub(1, 100), vim.log.levels.ERROR)
+    notify("✗ API error (HTTP " .. http_code .. "): " .. response:sub(1, 100), vim.log.levels.ERROR)
     return nil
   end
   
@@ -494,6 +507,9 @@ function M.login()
     return false
   end
   
+  -- Ensure data directory exists for cookies file
+  vim.fn.mkdir(M.config.data_dir, "p")
+  
   -- Extract base URL (remove /api suffix if present)
   local base_url = M.config.url:gsub("/api$", "")
   
@@ -501,13 +517,13 @@ function M.login()
   local password = vim.fn.inputsecret("NoteDiscovery password: ")
   
   if password == "" then
-    vim.notify("Login cancelled", vim.log.levels.WARN)
+    notify("Login cancelled", vim.log.levels.WARN)
     return false
   end
   
   -- Execute login curl command
   local cmd = string.format(
-    'curl -c %s -X POST -H "Content-Type: application/x-www-form-urlencoded" -d %s -s -w "%%{http_code}" -o /dev/null %s',
+    'curl -L -c %s -X POST -H "Content-Type: application/x-www-form-urlencoded" -d %s -s -w "%%{http_code}" -o /dev/null %s',
     M.config.cookies_file,
     vim.fn.shellescape("password=" .. password),
     vim.fn.shellescape(base_url .. "/login")
@@ -516,10 +532,10 @@ function M.login()
   local http_code = vim.fn.system(cmd)
   
   if vim.v.shell_error == 0 and (http_code == "303" or http_code == "200") then
-    vim.notify("✓ Login successful! Session saved to " .. M.config.cookies_file, vim.log.levels.INFO)
+    notify("✓ Login successful!", vim.log.levels.INFO)
     return true
   else
-    vim.notify("✗ Login failed (HTTP " .. http_code .. "). Check your password.", vim.log.levels.ERROR)
+    notify("✗ Login failed (HTTP " .. http_code .. "). Check your password.", vim.log.levels.ERROR)
     return false
   end
 end
@@ -570,7 +586,7 @@ function M.save_note(note_path)
   end
   
   if note_path == "" then
-    vim.notify("Save cancelled", vim.log.levels.WARN)
+    notify("Save cancelled", vim.log.levels.WARN)
     return
   end
   
@@ -580,9 +596,9 @@ function M.save_note(note_path)
   local result = curl_request("POST", "/notes/" .. note_path, { content = content })
   
   if result and result.success then
-    vim.notify("✓ Note saved: " .. note_path, vim.log.levels.INFO)
+    notify("✓ Note saved: " .. note_path, vim.log.levels.INFO)
   else
-    vim.notify("✗ Failed to save note", vim.log.levels.ERROR)
+    notify("✗ Failed to save note", vim.log.levels.ERROR)
   end
 end
 
@@ -593,7 +609,7 @@ function M.load_note(note_path, debug)
   end
   
   if note_path == "" then
-    vim.notify("Load cancelled", vim.log.levels.WARN)
+    notify("Load cancelled", vim.log.levels.WARN)
     return
   end
   
@@ -670,16 +686,16 @@ function M.load_note(note_path, debug)
     last_loaded_note = note_path
     save_last_note(note_path)
     
-    vim.notify("✓ Note loaded: " .. note_path .. " (use :w to save)", vim.log.levels.INFO)
+    notify("✓ Note loaded: " .. note_path, vim.log.levels.INFO)
   else
-    vim.notify("✗ Note not found or failed to load", vim.log.levels.ERROR)
+    notify("✗ Note not found or failed to load", vim.log.levels.ERROR)
   end
 end
 
 -- Load the last loaded note
 function M.load_last_note()
   if not last_loaded_note then
-    vim.notify("No previously loaded note", vim.log.levels.WARN)
+    notify("No previously loaded note", vim.log.levels.WARN)
     return
   end
   
@@ -693,7 +709,7 @@ function M.new_note(note_path)
   end
   
   if note_path == "" then
-    vim.notify("Cancelled", vim.log.levels.WARN)
+    notify("Cancelled", vim.log.levels.WARN)
     return
   end
   
@@ -748,7 +764,7 @@ function M.new_note(note_path)
     end,
   })
   
-  vim.notify("New note: " .. note_path .. " (use :w to save)", vim.log.levels.INFO)
+  notify("New note: " .. note_path, vim.log.levels.INFO)
 end
 
 -- Search notes
@@ -758,7 +774,7 @@ function M.search_notes(query, debug)
   end
   
   if query == "" then
-    vim.notify("Search cancelled", vim.log.levels.WARN)
+    notify("Search cancelled", vim.log.levels.WARN)
     return
   end
   
