@@ -320,54 +320,53 @@ function M.render_images(bufnr, note_path)
     return
   end
   
-  -- Initialize storage for rendered images
-  if not vim.b[bufnr].notediscovery_images then
-    vim.b[bufnr].notediscovery_images = {}
-  end
-  
-  -- Render each image
+  -- Download images and rewrite paths to cached locations
+  local modified = false
   for _, img_info in ipairs(images) do
     local success, result = pcall(function()
       -- Resolve URL
       local image_url = M.resolve_attachment_url(note_path, img_info.name)
       
       -- Download to cache
-      local local_path = M.download_attachment(image_url, img_info.name, note_path)
+      local cached_path = M.download_attachment(image_url, img_info.name, note_path)
       
-      if local_path then
-        -- Get the window displaying this buffer
-        local windows = vim.fn.win_findbuf(bufnr)
-        local window = windows[1] or vim.api.nvim_get_current_win()
+      if cached_path then
+        -- Rewrite the line to point to cached image
+        local line_idx = img_info.line
+        local line = lines[line_idx]
         
-        -- Try to create and render the image at the correct line
-        local image = image_nvim.from_file(local_path, {
-          window = window,
-          buffer = bufnr,
-          with_virtual_padding = true,
-          inline = true,
-          x = 0,
-          y = img_info.line - 1,  -- 0-indexed for image.nvim
-        })
+        -- Replace wiki-style links: ![[image.png]] -> ![image](cached_path)
+        local new_line = line:gsub("!%[%[" .. vim.pesc(img_info.name) .. "%]%]", "![" .. img_info.name .. "](" .. cached_path .. ")")
         
-        if image then
-          image:render()
-          table.insert(vim.b[bufnr].notediscovery_images, image)
-          
-          if M.config.debug then
-            log("Rendered image: " .. img_info.name .. " at line " .. img_info.line, vim.log.levels.INFO)
-          end
+        -- Also handle standard markdown that might already have descriptions
+        if new_line == line then
+          new_line = line:gsub("!%[([^%]]*)%]%(" .. vim.pesc(img_info.name) .. "%)", "![%1](" .. cached_path .. ")")
         end
-      else
-        if M.config.debug then
-          log("Failed to download: " .. img_info.name, vim.log.levels.WARN)
+        
+        if new_line ~= line then
+          lines[line_idx] = new_line
+          modified = true
         end
       end
     end)
     
     if not success and M.config.debug then
-      log("Error rendering image " .. img_info.name .. ": " .. tostring(result), vim.log.levels.ERROR)
+      log("Error processing image " .. img_info.name .. ": " .. tostring(result), vim.log.levels.ERROR)
     end
   end
+  
+  -- Update buffer with rewritten paths if modified
+  if modified then
+    local save_modified = vim.api.nvim_buf_get_option(bufnr, 'modified')
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.api.nvim_buf_set_option(bufnr, 'modified', save_modified)
+  end
+  
+  -- Let image.nvim's markdown integration handle rendering
+  vim.schedule(function()
+    -- Ensure filetype is set to markdown
+    vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
+  end)
 end
 
 -- Clear rendered images from buffer
@@ -377,24 +376,11 @@ function M.clear_images(bufnr)
     bufnr = vim.api.nvim_get_current_buf()
   end
   
-  -- Get stored images
-  local images = vim.b[bufnr].notediscovery_images
-  if not images or #images == 0 then
-    return
-  end
-  
   -- Check if image.nvim is available
   local has_image, image_nvim = pcall(require, "image")
-  if not has_image then
-    vim.b[bufnr].notediscovery_images = nil
-    return
-  end
-  
-  -- Clear each image
-  for _, image in ipairs(images) do
-    pcall(function()
-      image:clear()
-    end)
+  if has_image and image_nvim.clear then
+    -- Use image.nvim's built-in clear function
+    image_nvim.clear(bufnr)
   end
   
   -- Clear buffer variable
