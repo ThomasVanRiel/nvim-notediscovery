@@ -12,14 +12,25 @@
 
 local M = {}
 
+-- Track last loaded note for quick reload
+local last_loaded_note = nil
+
+-- Data directory for storing plugin data
+local data_dir = vim.fn.stdpath('data') .. '/notediscovery'
+
 -- Configuration
 M.config = {
   url = nil, -- Required: Must be set via setup()
-  cookies_file = vim.fn.expand("~/.notediscovery_cookies"),
+  data_dir = data_dir,
+  cookies_file = data_dir .. '/cookies',
   default_folder = "inbox",
   quick_note_format = "%Y-%m-%d-%H%M%S", -- strftime format for quick notes
-  log_file = vim.fn.expand("~/.notediscovery.log"),
+  log_file = data_dir .. '/notediscovery.log',
   auto_login = false, -- Automatically prompt for login on 401 errors
+  enable_images = true, -- Enable inline image rendering with image.nvim
+  auto_render_images = true, -- Automatically render images when loading notes
+  image_cache_dir = data_dir .. '/images', -- Cache directory for downloaded images
+  last_note_file = data_dir .. '/last_note', -- File to store last loaded note path
 }
 
 -- Logging function
@@ -43,6 +54,30 @@ local function log(message, level)
   vim.notify(message, level)
 end
 
+-- Save last loaded note to file
+local function save_last_note(note_path)
+  -- Ensure data directory exists
+  vim.fn.mkdir(M.config.data_dir, "p")
+  
+  local file = io.open(M.config.last_note_file, "w")
+  if file then
+    file:write(note_path)
+    file:close()
+  end
+end
+
+-- Load last loaded note from file
+local function load_last_note_from_file()
+  local file = io.open(M.config.last_note_file, "r")
+  if file then
+    local note_path = file:read("*all")
+    file:close()
+    if note_path and note_path ~= "" then
+      last_loaded_note = note_path
+    end
+  end
+end
+
 -- Setup function to override defaults
 function M.setup(opts)
   if not opts or not opts.url then
@@ -50,6 +85,16 @@ function M.setup(opts)
     return
   end
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
+  
+  -- Ensure data directory exists
+  vim.fn.mkdir(M.config.data_dir, "p")
+  
+  -- Load last note from file
+  load_last_note_from_file()
+  
+  -- Check if image.nvim is available
+  local has_image = pcall(require, "image")
+  M.config.enable_images = M.config.enable_images and has_image
   
   -- Register debug commands if debug mode is enabled
   if M.config.debug then
@@ -93,6 +138,271 @@ local function url_encode(str)
     end)
   end
   return str
+end
+
+-- Find image links in buffer lines
+-- Supports both ![[image.png]] (wiki-style) and ![alt](image.png) (standard markdown)
+function M.find_image_links(lines)
+  local images = {}
+  local image_extensions = {"png", "jpg", "jpeg", "gif", "bmp", "webp"}
+  
+  for line_num, line in ipairs(lines) do
+    -- Match wiki-style: ![[image.png]]
+    for image_name in line:gmatch("!%[%[([^%]]+)%]%]") do
+      -- Check if it has an image extension
+      local ext = image_name:match("%.([^%.]+)$")
+      if ext then
+        for _, valid_ext in ipairs(image_extensions) do
+          if ext:lower() == valid_ext then
+            local col_start = line:find("!%[%[" .. vim.pesc(image_name) .. "%]%]")
+            table.insert(images, {
+              name = image_name,
+              line = line_num,
+              col_start = col_start,
+            })
+            break
+          end
+        end
+      end
+    end
+    
+    -- Match standard markdown: ![alt](image.png)
+    for image_name in line:gmatch("!%[[^%]]*%]%(([^%)]+)%)") do
+      local ext = image_name:match("%.([^%.]+)$")
+      if ext then
+        for _, valid_ext in ipairs(image_extensions) do
+          if ext:lower() == valid_ext then
+            local col_start = line:find("!%[[^%]]*%]%(" .. vim.pesc(image_name) .. "%)")
+            table.insert(images, {
+              name = image_name,
+              line = line_num,
+              col_start = col_start,
+            })
+            break
+          end
+        end
+      end
+    end
+  end
+  
+  return images
+end
+
+-- Resolve attachment URL based on note path and image name
+function M.resolve_attachment_url(note_path, image_name)
+  local folder = vim.fn.fnamemodify(note_path, ":h")
+  
+  -- Handle root case where folder is "." or empty
+  if folder == "." or folder == "" then
+    folder = ""
+  end
+  
+  -- Build media path: {folder}/_attachments/{image_name}
+  local media_path
+  if folder == "" then
+    media_path = "_attachments/" .. image_name
+  else
+    media_path = folder .. "/_attachments/" .. image_name
+  end
+  
+  -- Build full URL: remove /api suffix if present, then add /api/media/
+  local base_url = M.config.url:gsub("/api$", "")
+  return base_url .. "/api/media/" .. url_encode(media_path)
+end
+
+-- Download attachment to local cache
+function M.download_attachment(image_url, image_name, note_path)
+  -- Ensure cache directory exists
+  vim.fn.mkdir(M.config.image_cache_dir, "p")
+  
+  -- Generate safe cache filename
+  local folder_name = vim.fn.fnamemodify(note_path, ":h:t")
+  if folder_name == "." or folder_name == "" then
+    folder_name = "root"
+  end
+  local cache_file = folder_name .. "_" .. image_name
+  local cache_path = M.config.image_cache_dir .. "/" .. cache_file
+  
+  -- Check if already cached and recent (within last 24 hours)
+  local stat = vim.loop.fs_stat(cache_path)
+  if stat and stat.mtime then
+    local age = os.time() - stat.mtime.sec
+    if age < 86400 then  -- 24 hours
+      if M.config.debug then
+        log("Using cached image: " .. cache_path, vim.log.levels.DEBUG)
+      end
+      return cache_path
+    end
+  end
+  
+  -- Download with curl
+  local cmd = string.format(
+    'curl -b %s -s -o %s %s',
+    M.config.cookies_file,
+    vim.fn.shellescape(cache_path),
+    vim.fn.shellescape(image_url)
+  )
+  
+  if M.config.debug then
+    log("Downloading image: " .. cmd, vim.log.levels.DEBUG)
+  end
+  
+  local exit_code = vim.fn.system(cmd)
+  
+  if vim.v.shell_error == 0 then
+    -- Verify the file was actually downloaded
+    local downloaded_stat = vim.loop.fs_stat(cache_path)
+    if downloaded_stat and downloaded_stat.size > 0 then
+      return cache_path
+    else
+      if M.config.debug then
+        log("Downloaded file is empty: " .. cache_path, vim.log.levels.WARN)
+      end
+      return nil
+    end
+  else
+    if M.config.debug then
+      log("Failed to download image: " .. image_url, vim.log.levels.ERROR)
+    end
+    return nil
+  end
+end
+
+-- Render images in buffer
+function M.render_images(bufnr, note_path)
+  -- Check if images are enabled
+  if not M.config.enable_images then
+    return
+  end
+  
+  -- Check if image.nvim is available
+  local has_image, image_nvim = pcall(require, "image")
+  if not has_image then
+    return
+  end
+  
+  -- Handle current buffer if bufnr is 0
+  if bufnr == 0 then
+    bufnr = vim.api.nvim_get_current_buf()
+  end
+  
+  -- Get note path from buffer variable if not provided
+  if not note_path then
+    note_path = vim.b[bufnr].notediscovery_path
+    if not note_path then
+      if M.config.debug then
+        log("No note path found for buffer " .. bufnr, vim.log.levels.WARN)
+      end
+      return
+    end
+  end
+  
+  -- Get buffer lines
+  local lines = vim.api.nvim_buf_get_lines(bufnr, 0, -1, false)
+  
+  -- Find all image links
+  local images = M.find_image_links(lines)
+  
+  if #images == 0 then
+    return
+  end
+  
+  -- Initialize storage for rendered images
+  if not vim.b[bufnr].notediscovery_images then
+    vim.b[bufnr].notediscovery_images = {}
+  end
+  
+  -- Render each image
+  for _, img_info in ipairs(images) do
+    local success, result = pcall(function()
+      -- Resolve URL
+      local image_url = M.resolve_attachment_url(note_path, img_info.name)
+      
+      -- Download to cache
+      local local_path = M.download_attachment(image_url, img_info.name, note_path)
+      
+      if local_path then
+        -- Try to create and render the image
+        local image = image_nvim.from_file(local_path, {
+          buffer = bufnr,
+          with_virtual_padding = true,
+        })
+        
+        if image then
+          image:render()
+          table.insert(vim.b[bufnr].notediscovery_images, image)
+          
+          if M.config.debug then
+            log("Rendered image: " .. img_info.name .. " at line " .. img_info.line, vim.log.levels.INFO)
+          end
+        end
+      else
+        if M.config.debug then
+          log("Failed to download: " .. img_info.name, vim.log.levels.WARN)
+        end
+      end
+    end)
+    
+    if not success and M.config.debug then
+      log("Error rendering image " .. img_info.name .. ": " .. tostring(result), vim.log.levels.ERROR)
+    end
+  end
+end
+
+-- Clear rendered images from buffer
+function M.clear_images(bufnr)
+  -- Handle current buffer if bufnr is 0
+  if bufnr == 0 then
+    bufnr = vim.api.nvim_get_current_buf()
+  end
+  
+  -- Get stored images
+  local images = vim.b[bufnr].notediscovery_images
+  if not images or #images == 0 then
+    return
+  end
+  
+  -- Check if image.nvim is available
+  local has_image, image_nvim = pcall(require, "image")
+  if not has_image then
+    vim.b[bufnr].notediscovery_images = nil
+    return
+  end
+  
+  -- Clear each image
+  for _, image in ipairs(images) do
+    pcall(function()
+      image:clear()
+    end)
+  end
+  
+  -- Clear buffer variable
+  vim.b[bufnr].notediscovery_images = nil
+end
+
+-- Toggle images on/off
+function M.toggle_images(bufnr)
+  -- Handle current buffer if bufnr is 0
+  if bufnr == 0 then
+    bufnr = vim.api.nvim_get_current_buf()
+  end
+  
+  -- Check if images are currently rendered
+  local images = vim.b[bufnr].notediscovery_images
+  if images and #images > 0 then
+    -- Images are shown, hide them
+    M.clear_images(bufnr)
+    vim.notify("Images hidden", vim.log.levels.INFO)
+  else
+    -- Images are hidden, show them
+    local note_path = vim.b[bufnr].notediscovery_path
+    if note_path then
+      M.render_images(bufnr, note_path)
+      vim.notify("Images shown", vim.log.levels.INFO)
+    else
+      vim.notify("Not a NoteDiscovery buffer", vim.log.levels.WARN)
+    end
+  end
 end
 
 -- Helper function to execute curl commands
@@ -338,13 +648,42 @@ function M.load_note(note_path, debug)
       end,
     })
     
+    -- Clean up images when buffer is closed
+    vim.api.nvim_create_autocmd("BufWipeout", {
+      buffer = bufnr,
+      callback = function()
+        M.clear_images(bufnr)
+      end,
+    })
+    
     -- Mark buffer as not modified initially
     vim.api.nvim_buf_set_option(bufnr, 'modified', false)
+    
+    -- Render images if enabled
+    if M.config.auto_render_images then
+      vim.schedule(function()
+        M.render_images(bufnr, note_path)
+      end)
+    end
+    
+    -- Store last loaded note for quick reload
+    last_loaded_note = note_path
+    save_last_note(note_path)
     
     vim.notify("✓ Note loaded: " .. note_path .. " (use :w to save)", vim.log.levels.INFO)
   else
     vim.notify("✗ Note not found or failed to load", vim.log.levels.ERROR)
   end
+end
+
+-- Load the last loaded note
+function M.load_last_note()
+  if not last_loaded_note then
+    vim.notify("No previously loaded note", vim.log.levels.WARN)
+    return
+  end
+  
+  M.load_note(last_loaded_note)
 end
 
 -- Create a new note from template
@@ -398,6 +737,14 @@ function M.new_note(note_path)
       else
         vim.notify("✗ Failed to save note", vim.log.levels.ERROR)
       end
+    end,
+  })
+  
+  -- Clean up images when buffer is closed
+  vim.api.nvim_create_autocmd("BufWipeout", {
+    buffer = bufnr,
+    callback = function()
+      M.clear_images(bufnr)
     end,
   })
   
