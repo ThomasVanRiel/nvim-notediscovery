@@ -300,14 +300,18 @@ end
 
 -- Render images in buffer
 function M.render_images(bufnr, note_path)
+  notify("render_images called!", vim.log.levels.INFO)
+  
   -- Check if images are enabled
   if not M.config.enable_images then
+    notify("Images disabled in config", vim.log.levels.WARN)
     return
   end
   
   -- Check if image.nvim is available
   local has_image, image_nvim = pcall(require, "image")
   if not has_image then
+    notify("image.nvim not available", vim.log.levels.WARN)
     return
   end
   
@@ -332,6 +336,8 @@ function M.render_images(bufnr, note_path)
   
   -- Find all image links
   local images = M.find_image_links(lines)
+  
+  notify("Found " .. #images .. " images", vim.log.levels.INFO)
   
   if #images == 0 then
     return
@@ -358,6 +364,8 @@ function M.render_images(bufnr, note_path)
   
   -- Force image.nvim to process the buffer
   vim.schedule(function()
+    notify("Starting image rendering...", vim.log.levels.INFO)
+    
     -- Ensure filetype is set
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
     
@@ -365,7 +373,11 @@ function M.render_images(bufnr, note_path)
     for _, img in ipairs(images) do
       local cache_file = M.get_cached_image_path(note_path, img.name)
       
+      notify("Checking cache: " .. cache_file, vim.log.levels.INFO)
+      
       if vim.fn.filereadable(cache_file) == 1 then
+        notify("Cache file exists, creating image object...", vim.log.levels.INFO)
+        
         -- Create image with image.nvim API
         local success, image_obj = pcall(image_nvim.from_file, cache_file, {
           buffer = bufnr,
@@ -377,16 +389,12 @@ function M.render_images(bufnr, note_path)
         
         if success and image_obj and image_obj.render then
           image_obj:render()
-          if M.config.debug then
-            notify("Rendered image: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
-          end
-        elseif M.config.debug then
-          notify("Failed to create image object for: " .. img.name, vim.log.levels.WARN)
+          notify("✓ Rendered: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
+        else
+          notify("✗ Failed to create/render: " .. img.name .. " - " .. tostring(image_obj), vim.log.levels.ERROR)
         end
       else
-        if M.config.debug then
-          notify("Cached image not found: " .. cache_file, vim.log.levels.WARN)
-        end
+        notify("✗ Cache file not found: " .. cache_file, vim.log.levels.ERROR)
       end
     end
     
@@ -697,9 +705,12 @@ function M.load_note(note_path, debug)
     
     -- Render images if enabled
     if M.config.auto_render_images then
+      notify("auto_render_images is enabled, scheduling render...", vim.log.levels.INFO)
       vim.schedule(function()
         M.render_images(bufnr, note_path)
       end)
+    else
+      notify("auto_render_images is disabled", vim.log.levels.WARN)
     end
     
     -- Store last loaded note for quick reload
