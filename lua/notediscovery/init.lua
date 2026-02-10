@@ -366,57 +366,53 @@ function M.render_images(bufnr, note_path)
   vim.schedule(function()
     notify("Starting image rendering...", vim.log.levels.INFO)
     
-    -- Ensure filetype is set first
+    -- Ensure filetype is set
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
     
-    -- Get the integrations module
-    local ok_integrations, integrations = pcall(require, 'image.integrations')
-    if ok_integrations and integrations.markdown then
-      notify("Triggering markdown integration...", vim.log.levels.INFO)
+    -- Clear existing images
+    pcall(image_nvim.clear, bufnr)
+    
+    -- Get window for this buffer
+    local win = vim.fn.bufwinid(bufnr)
+    if win == -1 then
+      notify("No window found for buffer", vim.log.levels.ERROR)
+      return
+    end
+    
+    -- Create images at each line
+    for _, img in ipairs(images) do
+      local cache_file = M.get_cached_image_path(note_path, img.name)
       
-      -- Clear existing images
-      pcall(image_nvim.clear, bufnr)
-      
-      -- Setup markdown integration for this buffer
-      local success = pcall(integrations.markdown.setup, {
-        resolve_image_path = function(document_path, image_path, fallback)
-          notify("resolve_image_path called: " .. image_path, vim.log.levels.INFO)
+      if vim.fn.filereadable(cache_file) == 1 then
+        local success, result = pcall(function()
+          -- Get window position for the line
+          vim.api.nvim_win_set_cursor(win, {img.line, 0})
+          local win_pos = vim.fn.screenpos(win, img.line, 0)
           
-          -- Only handle our notediscovery:// buffers
-          if not document_path:match("^notediscovery://") then
-            return fallback(document_path, image_path)
+          local image_obj = image_nvim.from_file(cache_file, {
+            id = "notediscovery_" .. bufnr .. "_" .. img.line .. "_" .. img.name:gsub("[^%w]", "_"),
+            window = win,
+            buffer = bufnr,
+            with_virtual_padding = true,
+            x = win_pos.col - 1,
+            y = win_pos.row - 1,
+          })
+          
+          if image_obj and image_obj.render then
+            image_obj:render()
+            return true
           end
-          
-          local note_path = document_path:gsub("^notediscovery://", "")
-          
-          -- Extract just the filename from image_path
-          local image_name = image_path:match("([^/]+)$") or image_path
-          image_name = image_name:gsub("^_attachments/", "")
-          
-          -- Get cached path
-          local cached_path = M.get_cached_image_path(note_path, image_name)
-          
-          notify("Resolved to: " .. cached_path, vim.log.levels.INFO)
-          
-          if vim.fn.filereadable(cached_path) == 1 then
-            return cached_path
-          end
-          
-          return fallback(document_path, image_path)
-        end,
-      })
-      
-      if success then
-        -- Render images in the buffer
-        if integrations.markdown.render then
-          pcall(integrations.markdown.render, bufnr)
+          return false
+        end)
+        
+        if success and result then
+          notify("✓ Rendered: " .. img.name .. " at line " .. img.line, vim.log.levels.INFO)
+        else
+          notify("✗ Failed: " .. img.name .. " - " .. tostring(result), vim.log.levels.ERROR)
         end
-        notify("✓ Markdown integration triggered", vim.log.levels.INFO)
       else
-        notify("✗ Failed to setup markdown integration", vim.log.levels.ERROR)
+        notify("✗ Cache file not found: " .. cache_file, vim.log.levels.ERROR)
       end
-    else
-      notify("✗ Markdown integration not available", vim.log.levels.ERROR)
     end
     
     -- Trigger a redraw
