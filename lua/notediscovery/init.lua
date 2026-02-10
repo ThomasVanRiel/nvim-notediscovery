@@ -4,9 +4,11 @@
 -- require('notediscovery').setup({
 --   url = "https://notes.example.com/api",  -- Required!
 --   default_folder = "inbox",               -- Optional
+--   auto_login = true,                      -- Optional: Auto-prompt for password on session expiry
 -- })
 --
 -- Then run :NoteLogin to authenticate (password will be hidden)
+-- With auto_login enabled, you'll be prompted automatically when your session expires
 
 local M = {}
 
@@ -17,6 +19,7 @@ M.config = {
   default_folder = "inbox",
   quick_note_format = "%Y-%m-%d-%H%M%S", -- strftime format for quick notes
   log_file = vim.fn.expand("~/.notediscovery.log"),
+  auto_login = false, -- Automatically prompt for login on 401 errors
 }
 
 -- Logging function
@@ -48,6 +51,11 @@ function M.setup(opts)
   end
   M.config = vim.tbl_deep_extend("force", M.config, opts or {})
   vim.notify("NoteDiscovery configured: " .. M.config.url, vim.log.levels.INFO)
+  
+  -- Show auto-login status
+  if M.config.auto_login then
+    vim.notify("Auto-login enabled - you'll be prompted automatically on session expiry", vim.log.levels.INFO)
+  end
   
   -- Register debug commands if debug mode is enabled
   if M.config.debug then
@@ -96,7 +104,11 @@ local function url_encode(str)
 end
 
 -- Helper function to execute curl commands
-local function curl_request(method, endpoint, data, debug)
+local function curl_request(method, endpoint, data, debug, retry_on_auth)
+  if retry_on_auth == nil then
+    retry_on_auth = true
+  end
+  
   if not check_config() then
     return nil
   end
@@ -141,8 +153,22 @@ local function curl_request(method, endpoint, data, debug)
   
   -- Check HTTP status codes
   if http_code == "401" then
-    vim.notify("✗ Not authenticated. Run :NoteLogin first", vim.log.levels.ERROR)
-    return nil
+    -- Auto-login if enabled
+    if M.config.auto_login and retry_on_auth then
+      vim.notify("Session expired. Attempting auto-login...", vim.log.levels.WARN)
+      local login_success = M.login()
+      if login_success then
+        vim.notify("Retrying request...", vim.log.levels.INFO)
+        -- Retry the request once with retry disabled to prevent infinite loop
+        return curl_request(method, endpoint, data, debug, false)
+      else
+        vim.notify("✗ Auto-login failed", vim.log.levels.ERROR)
+        return nil
+      end
+    else
+      vim.notify("✗ Not authenticated. Run :NoteLogin first", vim.log.levels.ERROR)
+      return nil
+    end
   elseif http_code == "404" then
     vim.notify("✗ Not found (404). Check the path or URL", vim.log.levels.ERROR)
     return nil
@@ -163,7 +189,7 @@ end
 -- Login to NoteDiscovery and create session cookie
 function M.login()
   if not check_config() then
-    return
+    return false
   end
   
   -- Extract base URL (remove /api suffix if present)
@@ -174,7 +200,7 @@ function M.login()
   
   if password == "" then
     vim.notify("Login cancelled", vim.log.levels.WARN)
-    return
+    return false
   end
   
   -- Execute login curl command
@@ -189,8 +215,10 @@ function M.login()
   
   if vim.v.shell_error == 0 and (http_code == "303" or http_code == "200") then
     vim.notify("✓ Login successful! Session saved to " .. M.config.cookies_file, vim.log.levels.INFO)
+    return true
   else
     vim.notify("✗ Login failed (HTTP " .. http_code .. "). Check your password.", vim.log.levels.ERROR)
+    return false
   end
 end
 
