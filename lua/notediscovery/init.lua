@@ -369,25 +369,54 @@ function M.render_images(bufnr, note_path)
     -- Ensure filetype is set first
     vim.api.nvim_buf_set_option(bufnr, 'filetype', 'markdown')
     
-    -- Clear any existing images
-    image_nvim.clear()
-    
-    -- Trigger markdown integration to scan the buffer
-    -- This will use our resolve_image_path function and handle positioning correctly
-    if image_nvim.hijack_buffer then
-      local success = pcall(image_nvim.hijack_buffer, bufnr, {
-        clear_in_insert_mode = false,
-        download_remote_images = false,
-        only_render_image_at_cursor = false,
+    -- Get the integrations module
+    local ok_integrations, integrations = pcall(require, 'image.integrations')
+    if ok_integrations and integrations.markdown then
+      notify("Triggering markdown integration...", vim.log.levels.INFO)
+      
+      -- Clear existing images
+      pcall(image_nvim.clear, bufnr)
+      
+      -- Setup markdown integration for this buffer
+      local success = pcall(integrations.markdown.setup, {
+        resolve_image_path = function(document_path, image_path, fallback)
+          notify("resolve_image_path called: " .. image_path, vim.log.levels.INFO)
+          
+          -- Only handle our notediscovery:// buffers
+          if not document_path:match("^notediscovery://") then
+            return fallback(document_path, image_path)
+          end
+          
+          local note_path = document_path:gsub("^notediscovery://", "")
+          
+          -- Extract just the filename from image_path
+          local image_name = image_path:match("([^/]+)$") or image_path
+          image_name = image_name:gsub("^_attachments/", "")
+          
+          -- Get cached path
+          local cached_path = M.get_cached_image_path(note_path, image_name)
+          
+          notify("Resolved to: " .. cached_path, vim.log.levels.INFO)
+          
+          if vim.fn.filereadable(cached_path) == 1 then
+            return cached_path
+          end
+          
+          return fallback(document_path, image_path)
+        end,
       })
       
       if success then
-        notify("✓ Image rendering triggered via markdown integration", vim.log.levels.INFO)
+        -- Render images in the buffer
+        if integrations.markdown.render then
+          pcall(integrations.markdown.render, bufnr)
+        end
+        notify("✓ Markdown integration triggered", vim.log.levels.INFO)
       else
-        notify("✗ Failed to trigger markdown integration", vim.log.levels.ERROR)
+        notify("✗ Failed to setup markdown integration", vim.log.levels.ERROR)
       end
     else
-      notify("✗ hijack_buffer not available", vim.log.levels.ERROR)
+      notify("✗ Markdown integration not available", vim.log.levels.ERROR)
     end
     
     -- Trigger a redraw
