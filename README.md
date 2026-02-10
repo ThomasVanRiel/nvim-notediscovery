@@ -55,12 +55,17 @@ Neovim integration for [NoteDiscovery](https://github.com/gamosoft/NoteDiscovery
                 end
                 
                 -- Extract just the filename from image_path
+                -- Handle both "image.png" and "_attachments/image.png" formats
                 local image_name = image_path:match("([^/]+)$") or image_path
                 
                 -- Build cached path
                 local cache_dir = vim.fn.stdpath('data') .. '/notediscovery/images'
                 local cached_file = folder .. "_" .. image_name
                 local cached_path = cache_dir .. "/" .. cached_file
+                
+                -- Debug logging (uncomment to troubleshoot)
+                -- print("Resolving: " .. image_path .. " -> " .. cached_path)
+                -- print("Exists: " .. tostring(vim.fn.filereadable(cached_path) == 1))
                 
                 -- Check if cached file exists
                 if vim.fn.filereadable(cached_path) == 1 then
@@ -355,6 +360,9 @@ The plugin now automatically follows redirects. If still failing:
 - Try the full URL with protocol: `http://` or `https://`
 
 ### Images not showing
+
+**Step-by-step debugging:**
+
 1. **Check if image.nvim is installed and configured:**
    ```vim
    :lua print(vim.inspect(package.loaded['image']))
@@ -372,19 +380,60 @@ The plugin now automatically follows redirects. If still failing:
    ```
    Should return `true`.
 
-4. **Enable debug mode:**
+4. **Check if images were downloaded:**
+   ```vim
+   :lua print(require('notediscovery').config.image_cache_dir)
+   ```
+   Then check that directory in your terminal:
+   ```bash
+   ls ~/.local/share/nvim/notediscovery/images/
+   ```
+   You should see cached image files like `folder_image.png`.
+
+5. **Enable debug logging in resolve_image_path:**
+   In your image.nvim config, uncomment these lines:
+   ```lua
+   -- print("Resolving: " .. image_path .. " -> " .. cached_path)
+   -- print("Exists: " .. tostring(vim.fn.filereadable(cached_path) == 1))
+   ```
+   Then reload a note and watch the output to see what paths are being resolved.
+
+6. **Verify buffer name format:**
+   ```vim
+   :lua print(vim.api.nvim_buf_get_name(0))
+   ```
+   Should show `notediscovery://folder/note.md` format.
+
+7. **Check image detection:**
+   With a note open, run:
+   ```vim
+   :lua local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false); local images = require('notediscovery').find_image_links(lines); print(vim.inspect(images))
+   ```
+   This shows if the plugin detected images in your note.
+
+8. **Enable plugin debug mode:**
    ```vim
    :lua require('notediscovery').config.debug = true
    :NoteLoad your-note.md
-   :lua print(require('notediscovery').config.log_file)
+   :lua print(vim.fn.readfile(require('notediscovery').config.log_file))
    ```
-   Check the log file for image download/rendering errors.
+   Check the log for image download errors.
 
-5. **Check image.nvim setup:**
-   If you see "image.nvim is not setup", add `opts = {...}` to your image.nvim dependency config (see Installation section).
+9. **Manually test path resolution:**
+   ```vim
+   :lua local resolve = require('image').options.integrations.markdown.resolve_image_path; print(resolve("notediscovery://inbox/test.md", "image.png", function(d,p) return p end))
+   ```
+   Should return the cached path if the image exists.
 
-6. **Verify custom path resolver:**
-   Images won't show without the `resolve_image_path` function in your image.nvim config. This function maps image names to cached paths. See the full configuration in the Installation section.
+10. **Check image.nvim setup:**
+    If you see "image.nvim is not setup", add `opts = {...}` to your image.nvim dependency config (see Installation section).
+
+11. **Force re-render:**
+    ```vim
+    :NoteImagesHide
+    :NoteImagesShow
+    ```
+    Or reload the buffer: `:edit`
 
 ### Images at wrong position
 If images appear shifted with wrapped lines:
